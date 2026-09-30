@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'">
+  <title>Vibe Check: Secret Scanner</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Vibe Check</h1>
+      <p class="lede">Paste your code. If you've leaked a password or API key, we'll tell you straight and tell you how to fix it.</p>
+      <p class="promise">Your code never leaves this page. Nothing is uploaded, saved, or sent anywhere.</p>
+    </header>
+
+    <section class="scanner" aria-label="Scanner">
+      <label for="code">Your code</label>
+      <textarea id="code" spellcheck="false" autocomplete="off" placeholder="Paste code here, or drop a file on this box"></textarea>
+
+      <div class="controls">
+        <label class="file-btn">
+          Choose a file
+          <input type="file" id="file">
+        </label>
+        <button type="button" id="clear" class="secondary">Clear</button>
+        <button type="button" id="scan" class="primary">Scan</button>
+      </div>
+      <p id="notice" class="notice" role="status" hidden></p>
+    </section>
+
+    <section id="results" aria-live="polite"></section>
+  </main>
+  <script src="script.js"></script>
+</body>
+</html>
