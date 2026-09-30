@@ -198,7 +198,15 @@ function scanEntries(entries) {
     if (!group) { group = { path: problem.path, findings: [] }; results.push(group); }
     group.findings.unshift(problem.finding);
   }
+  const rls = checkRls(entries.filter((e) => !e.text.includes("\u0000")), { notes: true });
+  for (const problem of rls.problems) {
+    let group = results.find((g) => g.path === problem.path);
+    if (!group) { group = { path: problem.path, findings: [] }; results.push(group); }
+    group.findings.push(problem.finding);
+    group.findings.sort((a, b) => (a.line || 0) - (b.line || 0));
+  }
   results.sort((a, b) => a.path.localeCompare(b.path));
+  results.note = rls.note;
   return results;
 }
 
@@ -300,6 +308,79 @@ function checkGitignore(entries) {
   return problems;
 }
 
+// ---------- Check: Supabase tables without Row Level Security ----------
+
+// Replaces SQL comments with spaces, keeping line numbers the same.
+function stripSqlComments(sql) {
+  return sql
+    .replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, " "))
+    .replace(/--[^\n]*/g, (c) => " ".repeat(c.length));
+}
+
+const SQL_IDENT = '(?:"[^"]+"|[A-Za-z_][\\w$]*)';
+const SQL_NAME = "(?:(" + SQL_IDENT + ")\\s*\\.\\s*)?(" + SQL_IDENT + ")";
+
+function sqlIdent(raw) {
+  if (!raw) return null;
+  return raw.startsWith('"') ? raw.slice(1, -1) : raw.toLowerCase();
+}
+
+const RLS_MESSAGE = "Row Level Security is off for this table. Your public Supabase key is in every visitor's browser, so anyone can use it to read, change, or delete everything in this table. Turn it on with: alter table TABLE_NAME enable row level security; then add policies that say who can see and change what.";
+const RLS_UNCHECKED = "We couldn't check your database tables. This project uses Supabase, but it has no database setup files (.sql), which usually means the tables were made in the Supabase website. Check them there: any table marked as unrestricted or with RLS disabled is open to anyone.";
+const RLS_DASHBOARD_NOTE = "We checked the tables in your .sql setup files. Tables made directly in the Supabase website aren't in those files, so check those there too.";
+
+// entries: [{ path, text }]. Returns { problems: [{ path, finding }], note: string | null }
+function checkRls(entries, options) {
+  const events = [];
+  const sqlFiles = entries.filter((e) => /\.sql$/i.test(e.path) || e.path === "Pasted code").sort((a, b) => a.path.localeCompare(b.path));
+  sqlFiles.forEach((file, fileIndex) => {
+    const sql = stripSqlComments(file.text);
+    const patterns = [
+      ["create", new RegExp("\\bcreate\\s+(?:(?:global\\s+|local\\s+)?(temp|temporary)\\s+|unlogged\\s+)?table\\s+(?:if\\s+not\\s+exists\\s+)?" + SQL_NAME, "gi")],
+      ["rls", new RegExp("\\balter\\s+table\\s+(?:if\\s+exists\\s+)?(?:only\\s+)?" + SQL_NAME + "\\s+(enable|disable)\\s+row\\s+level\\s+security", "gi")],
+      ["drop", new RegExp("\\bdrop\\s+table\\s+(?:if\\s+exists\\s+)?" + SQL_NAME, "gi")]
+    ];
+    for (const [kind, regex] of patterns) {
+      let m;
+      while ((m = regex.exec(sql)) !== null) {
+        events.push({ kind, m, fileIndex, index: m.index, file });
+      }
+    }
+  });
+  events.sort((a, b) => a.fileIndex - b.fileIndex || a.index - b.index);
+
+  const tables = new Map(); // "schema.table" -> { path, line, name, rls }
+  for (const ev of events) {
+    const m = ev.m;
+    if (ev.kind === "create") {
+      if (m[1]) continue; // temporary table
+      const schema = sqlIdent(m[2]) || "public";
+      if (schema !== "public") continue; // only the public schema is reachable with the public key
+      const name = sqlIdent(m[3]);
+      tables.set(schema + "." + name, { path: ev.file.path, line: lineOf(ev.file.text, m.index), name, rls: false });
+    } else {
+      const schema = sqlIdent(m[1]) || "public";
+      const key = schema + "." + sqlIdent(m[2]);
+      if (!tables.has(key)) continue;
+      if (ev.kind === "drop") tables.delete(key);
+      else tables.get(key).rls = m[3].toLowerCase() === "enable";
+    }
+  }
+
+  const problems = [];
+  for (const t of tables.values()) {
+    if (t.rls) continue;
+    problems.push({ path: t.path, finding: { type: "Table without protection", line: t.line, value: t.name, message: RLS_MESSAGE, setupDb: true } });
+  }
+
+  let note = null;
+  if (options && options.notes) {
+    const usesSupabase = entries.some((e) => /supabase/i.test(e.text));
+    if (usesSupabase) note = sqlFiles.length && events.some((e) => e.kind === "create") ? RLS_DASHBOARD_NOTE : RLS_UNCHECKED;
+  }
+  return { problems, note };
+}
+
 // ---------- Page code (browser only) ----------
 
 if (typeof document !== "undefined") {
@@ -327,6 +408,8 @@ if (typeof document !== "undefined") {
     return n + " " + word + (n === 1 ? "" : "s");
   }
 
+  let seenMessages = new Set();
+
   function findingCard(f) {
     const item = el("li", f.inEnv ? "finding env" : "finding");
     const head = el("div", "finding-head");
@@ -334,28 +417,38 @@ if (typeof document !== "undefined") {
     if (f.line) head.append(el("span", "finding-line", "Line " + f.line));
     item.append(head);
     if (f.value) item.append(el("code", "finding-value", f.value));
-    item.append(el("p", "finding-msg", f.message));
+    if (seenMessages.has(f.message)) {
+      item.append(el("p", "finding-msg repeat", "Same problem as " + f.type.toLowerCase() + " above. Same fix."));
+    } else {
+      seenMessages.add(f.message);
+      item.append(el("p", "finding-msg", f.message));
+    }
     return item;
   }
 
   // groups: [{ path, findings }]; summary: { checked, skipped: Map(reason -> [paths]) } or null for paste mode
-  function render(groups, summary) {
+  function render(groups, summary, note) {
     results.replaceChildren();
+    seenMessages = new Set();
     const all = groups.flatMap((g) => g.findings);
     const setup = all.filter((f) => f.setup).length;
     const exposed = all.filter((f) => f.exposed).length;
     const inEnv = all.filter((f) => f.inEnv).length;
-    const inCode = all.length - inEnv - setup - exposed;
+    const tablesOpen = all.filter((f) => f.setupDb).length;
+    const inCode = all.length - inEnv - setup - exposed - tablesOpen;
 
     let verdictText;
     if (!all.length) {
-      verdictText = "No problems found. Good. But this only checked for the specific problems listed below, nothing else.";
-    } else if (setup || exposed) {
+      verdictText = note === RLS_UNCHECKED
+        ? "No problems found in what we could check. But we couldn't check your database tables. See below."
+        : "No problems found. Good. But this only checked for the specific problems listed below, nothing else.";
+    } else if (setup || exposed || tablesOpen) {
       const parts = [];
       if (inCode) parts.push(plural(inCode, "secret") + " sitting in your code");
       if (exposed) parts.push(plural(exposed, "secret") + " marked public");
       if (inEnv) parts.push(plural(inEnv, "secret") + " in .env files");
       if (setup) parts.push(setup + " .env " + (setup === 1 ? "file" : "files") + " not protected from GitHub");
+      if (tablesOpen) parts.push(plural(tablesOpen, "database table") + " open to anyone");
       verdictText = "Found " + plural(all.length, "problem") + ": " + parts.join(", ") + ". Fix these before you push or deploy anything.";
     } else if (!inEnv) {
       verdictText = "Found " + plural(all.length, "leaked secret") + ". Fix " + (all.length === 1 ? "this" : "these") + " before you deploy anything.";
@@ -368,7 +461,9 @@ if (typeof document !== "undefined") {
     results.append(verdict);
 
     results.append(el("p", "limits",
-      "This scanner looks for leaked passwords and keys, secrets marked public, and .env files not protected by .gitignore. It does not check your login system, your database rules, or anything else. A clean result does not mean your app is safe."));
+      "This scanner looks for leaked passwords and keys, secrets marked public, .env files not protected by .gitignore, and Supabase tables without Row Level Security. It does not check your login system, the details of your database rules, or anything else. A clean result does not mean your app is safe."));
+
+    if (note) results.append(el("p", note === RLS_UNCHECKED ? "db-note warn" : "db-note", note));
 
     if (summary) {
       let skippedCount = 0;
@@ -418,8 +513,9 @@ if (typeof document !== "undefined") {
       return;
     }
     showNotice("");
-    const findings = scan(text);
-    render(findings.length ? [{ path: "Pasted code", findings }] : [], null);
+    const findings = scan(text).concat(checkRls([{ path: "Pasted code", text: text }], { notes: false }).problems.map((p) => p.finding));
+    findings.sort((a, b) => a.line - b.line);
+    render(findings.length ? [{ path: "Pasted code", findings }] : [], null, null);
   });
 
   clearBtn.addEventListener("click", () => {
@@ -492,9 +588,10 @@ if (typeof document !== "undefined") {
     if (binary.length) skipped.set("Non-text files", binary);
 
     showNotice("");
-    render(scanEntries(entries), { checked: entries.length - binary.length, skipped });
+    const groups = scanEntries(entries);
+    render(groups, { checked: entries.length - binary.length, skipped }, groups.note);
     folderInput.value = "";
   });
 }
 
-if (typeof module !== "undefined") module.exports = { scan, scanEntries, skipReason, displayPath, checkGitignore, parseGitignore, isIgnored };
+if (typeof module !== "undefined") module.exports = { scan, scanEntries, skipReason, displayPath, checkGitignore, parseGitignore, isIgnored, checkRls, RLS_UNCHECKED, RLS_DASHBOARD_NOTE };

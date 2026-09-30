@@ -163,3 +163,7 @@ button, .file-btn {
   overflow-wrap: anywhere;
 }
 .finding.env { border-left-color: var(--warn); }
+
+.db-note { border-left: 3px solid var(--line); padding-left: 0.9rem; margin: 0 0 1.5rem; color: var(--muted); }
+.db-note.warn { border-left-color: var(--warn); color: var(--ink); font-weight: 600; }
+.finding-msg.repeat { color: var(--muted); }

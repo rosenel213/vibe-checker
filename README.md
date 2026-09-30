@@ -28,6 +28,8 @@ It also checks that your `.env` files are protected by `.gitignore`, so they can
 
 It also catches secrets marked public: settings named `NEXT_PUBLIC_...`, `VITE_...`, `REACT_APP_...` or `EXPO_PUBLIC_...` get sent to every visitor's browser, so a secret with one of those names is a leaked secret. Public-by-design keys (like the Supabase anon key or Stripe publishable key) are left alone.
 
+For Supabase projects, it reads your `.sql` database setup files and flags tables without Row Level Security, which anyone can read and change using your public key. If there are no setup files (tables made in the Supabase website), it says it couldn't check, instead of staying quiet.
+
 Found secrets are always shown masked (like `sk-p...1234`), never in full.
 
 ## What it doesn't do
@@ -53,7 +55,7 @@ This is piece 1 of a bigger checker for vibe-coded apps, built slowly on purpose
 
 1. Secret scanner (done)
 2. Scan a whole project at once (done)
-3. Checks for common Next.js + Supabase mistakes (you're here: `.gitignore` check and public-secrets check done)
-4. Plain-English explanations of every finding
+3. Checks for common Next.js + Supabase mistakes (done)
+4. Plain-English explanations of every finding (next)
 5. A map that explains your own code to you
 6. A grade and shareable report card
