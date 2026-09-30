@@ -3,7 +3,9 @@
 
 "use strict";
 
-const MAX_BYTES = 1024 * 1024; // 1 MB
+const MAX_BYTES = 1024 * 1024; // 1 MB per paste or per file
+
+// ---------- Helpers ----------
 
 function mask(value) {
   if (value.length <= 10) return "****";
@@ -20,8 +22,14 @@ function decodeJwtPayload(part) {
   }
 }
 
-// The only detection rules. Each rule returns the secret value to show (masked),
-// or null to skip the match.
+// Passwords that are clearly template text, not real passwords.
+function isPlaceholderPassword(pw) {
+  if (/[\[\]<>{}$]/.test(pw)) return true; // [YOUR-PASSWORD], <password>, ${DB_PASS}
+  return /^(?:your[-_]?password|password|pass|changeme|secret|x+|\*+)$/i.test(pw);
+}
+
+// ---------- Detection rules (the only ones) ----------
+
 const RULES = [
   {
     type: "OpenAI key",
@@ -65,8 +73,8 @@ const RULES = [
   },
   {
     type: "Database address with password",
-    regex: /\b((?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis):\/\/[^:\s"'\/]+:)[^@\s"'\/]+@/g,
-    show: (m) => m[1] + "****@",
+    regex: /\b((?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis):\/\/[^:\s"'\/]+:)([^@\s"'\/]+)@/g,
+    show: (m) => (isPlaceholderPassword(m[2]) ? null : m[1] + "****@"),
     message: "This is the address and password to your database. Anyone with it can connect directly and do anything. Change the database password and move the address to an environment variable."
   },
   {
@@ -77,8 +85,15 @@ const RULES = [
   }
 ];
 
+const ENV_MESSAGE = "This is in an environment file, which is the right place for secrets, but only if this file never leaves your computer or server. Make sure .env files are listed in your .gitignore. If this file was ever pushed to GitHub or shared, treat the key as stolen and replace it.";
+
 function lineOf(text, index) {
   return text.slice(0, index).split("\n").length;
+}
+
+function isEnvFile(path) {
+  const name = path.split("/").pop();
+  return /^\.env(?:\.|$)/.test(name) && !/\.(?:example|sample|template)$/.test(name);
 }
 
 function scan(text) {
@@ -98,10 +113,58 @@ function scan(text) {
   return findings;
 }
 
+// ---------- Folder scanning ----------
+
+const SKIP_FOLDERS = new Set(["node_modules", ".git", ".next", "dist", "build", "out", "coverage", ".vercel", ".turbo", ".cache"]);
+const SKIP_FILES = new Set(["package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb"]);
+const SKIP_EXTENSIONS = new Set([
+  "png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp", "avif",
+  "mp3", "mp4", "wav", "mov", "webm", "ogg",
+  "woff", "woff2", "ttf", "otf", "eot",
+  "zip", "gz", "tar", "rar", "7z", "pdf", "exe", "dll", "so", "wasm", "map"
+]);
+
+// Returns a reason string if the file should be skipped, or null to scan it.
+function skipReason(path, size) {
+  const parts = path.split("/");
+  for (const part of parts.slice(0, -1)) {
+    if (SKIP_FOLDERS.has(part)) return "folder:" + part;
+  }
+  const name = parts[parts.length - 1];
+  if (SKIP_FILES.has(name)) return "Lock files (list of downloaded libraries)";
+  const ext = name.includes(".") ? name.split(".").pop().toLowerCase() : "";
+  if (SKIP_EXTENSIONS.has(ext)) return "Images, media, fonts and other non-code files";
+  if (size > MAX_BYTES) return "Files larger than 1 MB";
+  return null;
+}
+
+// Removes the top folder name so paths read like ".env" or "src/api/chat.js".
+function displayPath(relativePath) {
+  const parts = relativePath.split("/");
+  return parts.length > 1 ? parts.slice(1).join("/") : relativePath;
+}
+
+// entries: [{ path, text }] for files that were read. Pure function, easy to test.
+function scanEntries(entries) {
+  const results = [];
+  for (const entry of entries) {
+    if (entry.text.includes("\u0000")) continue; // binary file
+    const findings = scan(entry.text);
+    if (isEnvFile(entry.path)) {
+      for (const f of findings) { f.message = ENV_MESSAGE; f.inEnv = true; }
+    }
+    if (findings.length) results.push({ path: entry.path, findings });
+  }
+  results.sort((a, b) => a.path.localeCompare(b.path));
+  return results;
+}
+
 // ---------- Page code (browser only) ----------
+
 if (typeof document !== "undefined") {
   const input = document.getElementById("code");
   const fileInput = document.getElementById("file");
+  const folderInput = document.getElementById("folder");
   const scanBtn = document.getElementById("scan");
   const clearBtn = document.getElementById("clear");
   const results = document.getElementById("results");
@@ -119,32 +182,71 @@ if (typeof document !== "undefined") {
     notice.hidden = !text;
   }
 
-  function render(findings) {
-    results.replaceChildren();
+  function plural(n, word) {
+    return n + " " + word + (n === 1 ? "" : "s");
+  }
 
-    const verdict = el("h2", findings.length ? "verdict bad" : "verdict good",
-      findings.length
-        ? "Found " + findings.length + " leaked secret" + (findings.length === 1 ? "" : "s") + ". Fix " + (findings.length === 1 ? "this" : "these") + " before you deploy anything."
-        : "No leaked secrets found. Good. But this only checked for leaked secrets, nothing else.");
+  function findingCard(f) {
+    const item = el("li", f.inEnv ? "finding env" : "finding");
+    const head = el("div", "finding-head");
+    head.append(el("span", "finding-type", f.type), el("span", "finding-line", "Line " + f.line));
+    item.append(head, el("code", "finding-value", f.value), el("p", "finding-msg", f.message));
+    return item;
+  }
+
+  // groups: [{ path, findings }]; summary: { checked, skipped: Map(reason -> [paths]) } or null for paste mode
+  function render(groups, summary) {
+    results.replaceChildren();
+    const all = groups.flatMap((g) => g.findings);
+    const inEnv = all.filter((f) => f.inEnv).length;
+    const inCode = all.length - inEnv;
+
+    let verdictText;
+    if (!all.length) {
+      verdictText = "No leaked secrets found. Good. But this only checked for leaked secrets, nothing else.";
+    } else if (!inEnv) {
+      verdictText = "Found " + plural(all.length, "leaked secret") + ". Fix " + (all.length === 1 ? "this" : "these") + " before you deploy anything.";
+    } else if (!inCode) {
+      verdictText = "Found " + plural(inEnv, "secret") + " in .env files. That's the right place, but only if those files are never shared or committed.";
+    } else {
+      verdictText = "Found " + plural(all.length, "secret") + ". " + inCode + " " + (inCode === 1 ? "is" : "are") + " sitting in your code, where anyone can find " + (inCode === 1 ? "it" : "them") + ". Fix those first.";
+    }
+    const verdict = el("h2", all.length ? "verdict bad" : "verdict good", verdictText);
     results.append(verdict);
 
     results.append(el("p", "limits",
-      "This scanner only looks for passwords and keys pasted into code. It does not check your login system, your database rules, or anything else. A clean result does not mean your app is safe."));
+      "This scanner only looks for passwords and keys. It does not check your login system, your database rules, or anything else. A clean result does not mean your app is safe."));
 
-    if (!findings.length) return;
-
-    const list = el("ol", "findings");
-    for (const f of findings) {
-      const item = el("li", "finding");
-      const head = el("div", "finding-head");
-      head.append(el("span", "finding-type", f.type), el("span", "finding-line", "Line " + f.line));
-      item.append(head, el("code", "finding-value", f.value), el("p", "finding-msg", f.message));
-      list.append(item);
+    if (summary) {
+      let skippedCount = 0;
+      for (const paths of summary.skipped.values()) skippedCount += paths.length;
+      results.append(el("p", "coverage", "Checked " + plural(summary.checked, "file") + ". Skipped " + plural(skippedCount, "file") + "."));
+      if (skippedCount) {
+        const details = el("details", "skipped");
+        details.append(el("summary", null, "What was skipped, and why"));
+        const list = el("ul");
+        for (const [reason, paths] of summary.skipped) {
+          const label = reason.startsWith("folder:")
+            ? "The " + reason.slice(7) + " folder (downloaded or generated files, not your own code)"
+            : reason;
+          list.append(el("li", null, label + ": " + plural(paths.length, "file")));
+        }
+        details.append(list);
+        results.append(details);
+      }
     }
-    results.append(list);
 
-    results.append(el("p", "history",
-      "Deleting a key from your code is not enough. It stays in your git history and past deployments. Always create a new key and cancel the old one."));
+    for (const group of groups) {
+      if (summary) results.append(el("h3", "file-name", group.path));
+      const list = el("ol", "findings");
+      for (const f of group.findings) list.append(findingCard(f));
+      results.append(list);
+    }
+
+    if (inCode) {
+      results.append(el("p", "history",
+        "Deleting a key from your code is not enough. It stays in your git history and past deployments. Always create a new key and cancel the old one."));
+    }
 
     verdict.setAttribute("tabindex", "-1");
     verdict.focus();
@@ -163,12 +265,14 @@ if (typeof document !== "undefined") {
       return;
     }
     showNotice("");
-    render(scan(text));
+    const findings = scan(text);
+    render(findings.length ? [{ path: "Pasted code", findings }] : [], null);
   });
 
   clearBtn.addEventListener("click", () => {
     input.value = "";
     fileInput.value = "";
+    folderInput.value = "";
     results.replaceChildren();
     showNotice("");
     input.focus();
@@ -199,6 +303,45 @@ if (typeof document !== "undefined") {
     input.classList.remove("dragging");
     loadFile(e.dataTransfer.files[0]);
   });
+
+  folderInput.addEventListener("change", async () => {
+    const files = Array.from(folderInput.files);
+    if (!files.length) return;
+    input.value = "";
+    results.replaceChildren();
+
+    const skipped = new Map();
+    const toRead = [];
+    for (const file of files) {
+      const path = displayPath(file.webkitRelativePath || file.name);
+      const reason = skipReason(path, file.size);
+      if (reason) {
+        if (!skipped.has(reason)) skipped.set(reason, []);
+        skipped.get(reason).push(path);
+      } else {
+        toRead.push({ file, path });
+      }
+    }
+
+    showNotice("Checking " + plural(toRead.length, "file") + " on your computer...");
+    const entries = [];
+    const unreadable = [];
+    for (const { file, path } of toRead) {
+      try {
+        entries.push({ path, text: await file.text() });
+      } catch (e) {
+        unreadable.push(path);
+      }
+    }
+    if (unreadable.length) skipped.set("Files the browser couldn't read", unreadable);
+
+    const binary = entries.filter((e) => e.text.includes("\u0000")).map((e) => e.path);
+    if (binary.length) skipped.set("Non-text files", binary);
+
+    showNotice("");
+    render(scanEntries(entries), { checked: entries.length - binary.length, skipped });
+    folderInput.value = "";
+  });
 }
 
-if (typeof module !== "undefined") module.exports = { scan };
+if (typeof module !== "undefined") module.exports = { scan, scanEntries, skipReason, displayPath };

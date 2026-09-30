@@ -142,3 +142,24 @@ button, .file-btn {
 @media (max-width: 480px) {
   .primary { margin-left: 0; flex-basis: 100%; order: -1; }
 }
+
+/* ---------- Piece 2: project folder scanning ---------- */
+:root { --warn: #9a5b00; }
+@media (prefers-color-scheme: dark) { :root { --warn: #f0b44c; } }
+
+.section-title { font-size: 1.2rem; font-weight: 800; margin: 0 0 0.6rem; }
+.project { margin-bottom: 2.5rem; }
+.file-btn.big { display: inline-block; background: var(--ink); color: var(--bg); }
+.hint { color: var(--muted); font-size: 0.95rem; margin: 0.6rem 0 0; max-width: 36rem; }
+
+.coverage { font-weight: 700; margin: 0 0 0.5rem; }
+.skipped { margin: 0 0 2rem; color: var(--muted); }
+.skipped summary { cursor: pointer; }
+.skipped ul { margin: 0.5rem 0 0; padding-left: 1.2rem; }
+
+.file-name {
+  font: 700 1rem ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  margin: 2rem 0 0.6rem;
+  overflow-wrap: anywhere;
+}
+.finding.env { border-left-color: var(--warn); }

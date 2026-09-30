@@ -11,11 +11,21 @@
   <main>
     <header>
       <h1>Vibe Check</h1>
-      <p class="lede">Paste your code. If you've leaked a password or API key, we'll tell you straight and tell you how to fix it.</p>
+      <p class="lede">Check your code or your whole project folder. If you've leaked a password or API key, we'll tell you straight and tell you how to fix it.</p>
       <p class="promise">Your code never leaves this page. Nothing is uploaded, saved, or sent anywhere.</p>
     </header>
 
-    <section class="scanner" aria-label="Scanner">
+    <section class="project" aria-label="Scan a project folder">
+      <h2 class="section-title">Scan a whole project</h2>
+      <label class="file-btn big">
+        Choose a project folder
+        <input type="file" id="folder" webkitdirectory multiple>
+      </label>
+      <p class="hint">Your browser may ask if you want to "upload" the files. That's its standard wording for letting a page read them. The files are read here on your computer and never sent anywhere.</p>
+    </section>
+
+    <section class="scanner" aria-label="Scan pasted code">
+      <h2 class="section-title">Or check one file or snippet</h2>
       <label for="code">Your code</label>
       <textarea id="code" spellcheck="false" autocomplete="off" placeholder="Paste code here, or drop a file on this box"></textarea>
 
