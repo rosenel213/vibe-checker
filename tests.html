@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'">
+  <title>Vibe Check: Tests</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Tests</h1>
+      <p class="lede">These tests run the scanner on practice files with known answers, right here in your browser. If any fail, the scanner can't be trusted until they're fixed.</p>
+      <p class="promise"><a href="./">Back to the scanner</a></p>
+    </header>
+    <section id="test-results" aria-live="polite"></section>
+  </main>
+  <script src="js/rules.js"></script>
+  <script src="js/folder.js"></script>
+  <script src="js/gitignore.js"></script>
+  <script src="js/rls.js"></script>
+  <script src="js/project.js"></script>
+  <script src="tests/fixtures.js"></script>
+  <script src="tests/tests.js"></script>
+</body>
+</html>

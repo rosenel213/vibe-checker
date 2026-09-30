@@ -167,3 +167,10 @@ button, .file-btn {
 .db-note { border-left: 3px solid var(--line); padding-left: 0.9rem; margin: 0 0 1.5rem; color: var(--muted); }
 .db-note.warn { border-left-color: var(--warn); color: var(--ink); font-weight: 600; }
 .finding-msg.repeat { color: var(--muted); }
+
+/* ---------- Tests page ---------- */
+a { color: var(--focus); }
+.test-list { list-style: none; padding: 0; margin: 1.5rem 0 0; display: grid; gap: 0.5rem; }
+.test-list li { background: var(--surface); padding: 0.6rem 0.9rem; border-left: 6px solid var(--safe); border-radius: 0 6px 6px 0; font-weight: 600; }
+.test-list li.fail { border-left-color: var(--danger); color: var(--danger); }
+.test-list pre { font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); font-weight: 400; }

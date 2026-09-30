@@ -10,7 +10,7 @@ The scan runs entirely on your own computer. Nothing is uploaded, saved, logged,
 
 Don't just take our word for it. You can check:
 
-- **Read the code.** It's three small files in this repository. `script.js` does all the scanning and contains no network requests.
+- **Read the code.** It's three small files in this repository. The code is a few small files in this repository (listed below), and none of them make network requests.
 - **Look at the security setting.** `index.html` includes a Content-Security-Policy with `connect-src 'none'`, which tells your browser to block the page from sending data anywhere.
 - **Watch it yourself.** Open your browser's developer tools, go to the Network tab, and run a scan. You'll see no requests.
 
@@ -40,6 +40,28 @@ Brutal honesty, because a security tool that oversells itself is dangerous:
 - When scanning a folder, it skips downloaded and generated files (like `node_modules`), images, lock files, and files over 1 MB. It always tells you what it skipped.
 - It does not check your login system, database rules, or anything else about your app's security.
 - **A clean result does not mean your app is safe.** It means we didn't find these specific leaks.
+
+## Run the tests yourself
+
+Open **https://rosenel213.github.io/vibe-checker/tests.html**. It runs the scanner on practice files with known answers, right in your browser, and shows PASS or FAIL for each. If anything fails, don't trust the scanner until it's fixed.
+
+## How the code is organized
+
+Each file has one job:
+
+| File | Job |
+|---|---|
+| `index.html` | The scanner page |
+| `tests.html` | The tests page |
+| `style.css` | How everything looks |
+| `js/rules.js` | What counts as a leaked secret |
+| `js/folder.js` | Which files in a folder get skipped |
+| `js/gitignore.js` | Check: `.env` files protected by `.gitignore` |
+| `js/rls.js` | Check: Supabase tables without Row Level Security |
+| `js/project.js` | Runs every check over a whole folder |
+| `js/page.js` | Connects the buttons and results on the page |
+| `tests/fixtures.js` | The practice files, used by the tests |
+| `tests/tests.js` | The tests and their answer keys |
 
 ## Found a key? Deleting it isn't enough
 
