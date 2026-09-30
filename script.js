@@ -28,6 +28,29 @@ function isPlaceholderPassword(pw) {
   return /^(?:your[-_]?password|password|pass|changeme|secret|x+|\*+)$/i.test(pw);
 }
 
+// Words in a setting's name that mean "this is a secret".
+const SECRET_NAME_WORDS = new Set(["SECRET", "PRIVATE", "PASSWORD", "PASSWD", "SERVICEROLE"]);
+// Services whose API keys are always secret (they bill you or give full access).
+const SECRET_SERVICES = new Set([
+  "OPENAI", "ANTHROPIC", "CLAUDE", "GROQ", "GEMINI", "MISTRAL", "DEEPSEEK", "COHERE", "PERPLEXITY",
+  "REPLICATE", "HUGGINGFACE", "ELEVENLABS", "RESEND", "SENDGRID", "MAILGUN", "TWILIO"
+]);
+
+// Is a public setting name (like NEXT_PUBLIC_OPENAI_API_KEY) actually a secret?
+function publicNameLooksSecret(name) {
+  const rest = name.replace(/^(?:NEXT_PUBLIC|VITE|REACT_APP|EXPO_PUBLIC)_/, "");
+  const words = rest.split("_").filter(Boolean);
+  const joined = [];
+  for (let i = 0; i < words.length; i++) {
+    joined.push(words[i]);
+    if (i + 1 < words.length) joined.push(words[i] + words[i + 1]); // SERVICE_ROLE -> SERVICEROLE
+  }
+  if (joined.some((w) => SECRET_NAME_WORDS.has(w))) return true;
+  if (words.some((w) => SECRET_SERVICES.has(w))) return true;
+  if (/^(?:DATABASE|DB)_URL$/.test(rest)) return true;
+  return false;
+}
+
 // ---------- Detection rules (the only ones) ----------
 
 const RULES = [
@@ -78,6 +101,13 @@ const RULES = [
     message: "This is the address and password to your database. Anyone with it can connect directly and do anything. Change the database password and move the address to an environment variable."
   },
   {
+    type: "Secret marked public",
+    regex: /\b(?:NEXT_PUBLIC|VITE|REACT_APP|EXPO_PUBLIC)_[A-Z0-9_]+\b/g,
+    show: (m) => (publicNameLooksSecret(m[0]) ? m[0] : null),
+    exposed: true,
+    message: "Settings whose names start with NEXT_PUBLIC_, VITE_, REACT_APP_ or EXPO_PUBLIC_ are copied into your website and sent to every visitor's browser. This one is a secret, so if your site is live, it's already public. Remove the prefix, use the key only in server code (like an API route or a Supabase Edge Function), and replace the key, because the old one has been exposed."
+  },
+  {
     type: "Private key",
     regex: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g,
     show: (m) => m[0],
@@ -104,7 +134,11 @@ function scan(text) {
     while ((m = rule.regex.exec(text)) !== null) {
       const shown = rule.show(m);
       if (shown !== null) {
-        findings.push({ type: rule.type, line: lineOf(text, m.index), value: shown, message: rule.message });
+        const line = lineOf(text, m.index);
+        const duplicate = findings.some((f) => f.type === rule.type && f.line === line && f.value === shown);
+        if (!duplicate) {
+          findings.push({ type: rule.type, line, value: shown, message: rule.message, exposed: !!rule.exposed });
+        }
       }
       if (m[0].length === 0) rule.regex.lastIndex++;
     }
@@ -151,7 +185,11 @@ function scanEntries(entries) {
     if (entry.text.includes("\u0000")) continue; // binary file
     const findings = scan(entry.text);
     if (isEnvFile(entry.path)) {
-      for (const f of findings) { f.message = ENV_MESSAGE; f.inEnv = true; }
+      for (const f of findings) {
+        if (f.exposed) continue; // a public name is a problem wherever it's written
+        f.message = ENV_MESSAGE;
+        f.inEnv = true;
+      }
     }
     if (findings.length) results.push({ path: entry.path, findings });
   }
@@ -237,7 +275,7 @@ function isIgnored(filePath, gitignores) {
   return matchesIgnore(filePath, false, gitignores);
 }
 
-const NO_GITIGNORE_MESSAGE = "Your project has no .gitignore file, so nothing stops this file from being pushed to GitHub along with your code, secrets and all. Create a file named .gitignore in your project's main folder with these two lines: .env* and !.env.example. If your .gitignore lives in a folder above the one you picked, pick that folder instead so we can see it.";
+const NO_GITIGNORE_MESSAGE = "There's no .gitignore file for this part of your project, so nothing stops this file from being pushed to GitHub along with your code, secrets and all. Create a file named .gitignore in your project's main folder with these two lines: .env* and !.env.example. If your .gitignore lives in a folder above the one you picked, pick that folder instead so we can see it.";
 const NOT_COVERED_MESSAGE = "Your .gitignore doesn't cover this file, so it will be pushed to GitHub the next time you commit. Add the line .env* to your .gitignore (and !.env.example if you share a template). If this file is already on GitHub, .gitignore won't remove it: run git rm --cached on it and replace every secret inside.";
 
 // entries: [{ path, text }]. Returns [{ path, finding }] for unprotected .env files.
@@ -254,7 +292,7 @@ function checkGitignore(entries) {
       path: e.path,
       finding: {
         type: "Not protected from GitHub",
-        message: gitignores.length ? NOT_COVERED_MESSAGE : NO_GITIGNORE_MESSAGE,
+        message: gitignores.some((g) => !g.dir || e.path.startsWith(g.dir + "/")) ? NOT_COVERED_MESSAGE : NO_GITIGNORE_MESSAGE,
         setup: true
       }
     });
@@ -305,18 +343,20 @@ if (typeof document !== "undefined") {
     results.replaceChildren();
     const all = groups.flatMap((g) => g.findings);
     const setup = all.filter((f) => f.setup).length;
+    const exposed = all.filter((f) => f.exposed).length;
     const inEnv = all.filter((f) => f.inEnv).length;
-    const inCode = all.length - inEnv - setup;
+    const inCode = all.length - inEnv - setup - exposed;
 
     let verdictText;
-    if (setup) {
+    if (!all.length) {
+      verdictText = "No problems found. Good. But this only checked for the specific problems listed below, nothing else.";
+    } else if (setup || exposed) {
       const parts = [];
       if (inCode) parts.push(plural(inCode, "secret") + " sitting in your code");
+      if (exposed) parts.push(plural(exposed, "secret") + " marked public");
       if (inEnv) parts.push(plural(inEnv, "secret") + " in .env files");
-      parts.push(setup + " .env " + (setup === 1 ? "file" : "files") + " not protected from GitHub");
+      if (setup) parts.push(setup + " .env " + (setup === 1 ? "file" : "files") + " not protected from GitHub");
       verdictText = "Found " + plural(all.length, "problem") + ": " + parts.join(", ") + ". Fix these before you push or deploy anything.";
-    } else if (!all.length) {
-      verdictText = "No leaked secrets found. Good. But this only checked for leaked secrets, nothing else.";
     } else if (!inEnv) {
       verdictText = "Found " + plural(all.length, "leaked secret") + ". Fix " + (all.length === 1 ? "this" : "these") + " before you deploy anything.";
     } else if (!inCode) {
@@ -328,7 +368,7 @@ if (typeof document !== "undefined") {
     results.append(verdict);
 
     results.append(el("p", "limits",
-      "This scanner only looks for passwords and keys. It does not check your login system, your database rules, or anything else. A clean result does not mean your app is safe."));
+      "This scanner looks for leaked passwords and keys, secrets marked public, and .env files not protected by .gitignore. It does not check your login system, your database rules, or anything else. A clean result does not mean your app is safe."));
 
     if (summary) {
       let skippedCount = 0;
