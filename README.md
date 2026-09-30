@@ -24,6 +24,8 @@ Don't just take our word for it. You can check:
 - Database addresses with passwords in them
 - Private keys
 
+It also checks that your `.env` files are protected by `.gitignore`, so they can't be pushed to GitHub by accident. This includes the common gap in older Next.js projects, where `.gitignore` only covers `.env*.local` and leaves plain `.env` unprotected.
+
 Found secrets are always shown masked (like `sk-p...1234`), never in full.
 
 ## What it doesn't do
@@ -48,8 +50,8 @@ If the scanner missed a real secret or flagged something harmless, please open a
 This is piece 1 of a bigger checker for vibe-coded apps, built slowly on purpose, so every piece is tested before the next one starts:
 
 1. Secret scanner (done)
-2. Scan a whole project at once (you're here)
-3. Checks for common Next.js + Supabase mistakes
+2. Scan a whole project at once (done)
+3. Checks for common Next.js + Supabase mistakes (you're here: `.gitignore` check done)
 4. Plain-English explanations of every finding
 5. A map that explains your own code to you
 6. A grade and shareable report card

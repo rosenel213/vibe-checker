@@ -155,8 +155,111 @@ function scanEntries(entries) {
     }
     if (findings.length) results.push({ path: entry.path, findings });
   }
+  for (const problem of checkGitignore(entries.filter((e) => !e.text.includes("\u0000")))) {
+    let group = results.find((g) => g.path === problem.path);
+    if (!group) { group = { path: problem.path, findings: [] }; results.push(group); }
+    group.findings.unshift(problem.finding);
+  }
   results.sort((a, b) => a.path.localeCompare(b.path));
   return results;
+}
+
+// ---------- Check: .env files protected by .gitignore ----------
+
+function globToRegex(glob) {
+  let re = "";
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === "*") {
+      if (glob[i + 1] === "*") {
+        if (glob[i + 2] === "/") { re += "(?:.*/)?"; i += 2; }
+        else { re += ".*"; i += 1; }
+      } else {
+        re += "[^/]*";
+      }
+    } else if (c === "?") {
+      re += "[^/]";
+    } else if ("\\^$+.()|{}[]".includes(c)) {
+      re += "\\" + c;
+    } else {
+      re += c;
+    }
+  }
+  return re;
+}
+
+// Turns one .gitignore file into a list of rules. baseDir is its folder ("" for the top).
+function parseGitignore(text, baseDir) {
+  const rules = [];
+  for (let line of text.split(/\r?\n/)) {
+    line = line.replace(/\s+$/, "");
+    if (!line || line.startsWith("#")) continue;
+    let negate = false;
+    if (line.startsWith("!")) { negate = true; line = line.slice(1); }
+    else if (line.startsWith("\\")) { line = line.slice(1); }
+    let dirOnly = false;
+    if (line.endsWith("/")) { dirOnly = true; line = line.slice(0, -1); }
+    const anchored = line.includes("/");
+    if (line.startsWith("/")) line = line.slice(1);
+    if (!line) continue;
+    const body = globToRegex(line);
+    const regex = new RegExp(anchored ? "^" + body + "$" : "^(?:.*/)?" + body + "$");
+    rules.push({ regex, negate, dirOnly, baseDir });
+  }
+  return rules;
+}
+
+function dirOf(path) {
+  const i = path.lastIndexOf("/");
+  return i === -1 ? "" : path.slice(0, i);
+}
+
+// Decides if one path (file or folder) is ignored, using every .gitignore above it.
+function matchesIgnore(path, isDir, gitignores) {
+  let ignored = false;
+  for (const g of gitignores) {
+    const prefix = g.dir ? g.dir + "/" : "";
+    if (prefix && !path.startsWith(prefix)) continue;
+    const rel = path.slice(prefix.length);
+    for (const rule of g.rules) {
+      if (rule.dirOnly && !isDir) continue;
+      if (rule.regex.test(rel)) ignored = !rule.negate;
+    }
+  }
+  return ignored;
+}
+
+function isIgnored(filePath, gitignores) {
+  const parts = filePath.split("/");
+  for (let i = 1; i < parts.length; i++) {
+    if (matchesIgnore(parts.slice(0, i).join("/"), true, gitignores)) return true; // a parent folder is ignored
+  }
+  return matchesIgnore(filePath, false, gitignores);
+}
+
+const NO_GITIGNORE_MESSAGE = "Your project has no .gitignore file, so nothing stops this file from being pushed to GitHub along with your code, secrets and all. Create a file named .gitignore in your project's main folder with these two lines: .env* and !.env.example. If your .gitignore lives in a folder above the one you picked, pick that folder instead so we can see it.";
+const NOT_COVERED_MESSAGE = "Your .gitignore doesn't cover this file, so it will be pushed to GitHub the next time you commit. Add the line .env* to your .gitignore (and !.env.example if you share a template). If this file is already on GitHub, .gitignore won't remove it: run git rm --cached on it and replace every secret inside.";
+
+// entries: [{ path, text }]. Returns [{ path, finding }] for unprotected .env files.
+function checkGitignore(entries) {
+  const gitignores = entries
+    .filter((e) => e.path.split("/").pop() === ".gitignore")
+    .map((e) => ({ dir: dirOf(e.path), rules: parseGitignore(e.text, dirOf(e.path)) }))
+    .sort((a, b) => a.dir.length - b.dir.length); // top folder first, deeper ones override
+  const problems = [];
+  for (const e of entries) {
+    if (!isEnvFile(e.path)) continue;
+    if (isIgnored(e.path, gitignores)) continue;
+    problems.push({
+      path: e.path,
+      finding: {
+        type: "Not protected from GitHub",
+        message: gitignores.length ? NOT_COVERED_MESSAGE : NO_GITIGNORE_MESSAGE,
+        setup: true
+      }
+    });
+  }
+  return problems;
 }
 
 // ---------- Page code (browser only) ----------
@@ -189,8 +292,11 @@ if (typeof document !== "undefined") {
   function findingCard(f) {
     const item = el("li", f.inEnv ? "finding env" : "finding");
     const head = el("div", "finding-head");
-    head.append(el("span", "finding-type", f.type), el("span", "finding-line", "Line " + f.line));
-    item.append(head, el("code", "finding-value", f.value), el("p", "finding-msg", f.message));
+    head.append(el("span", "finding-type", f.type));
+    if (f.line) head.append(el("span", "finding-line", "Line " + f.line));
+    item.append(head);
+    if (f.value) item.append(el("code", "finding-value", f.value));
+    item.append(el("p", "finding-msg", f.message));
     return item;
   }
 
@@ -198,11 +304,18 @@ if (typeof document !== "undefined") {
   function render(groups, summary) {
     results.replaceChildren();
     const all = groups.flatMap((g) => g.findings);
+    const setup = all.filter((f) => f.setup).length;
     const inEnv = all.filter((f) => f.inEnv).length;
-    const inCode = all.length - inEnv;
+    const inCode = all.length - inEnv - setup;
 
     let verdictText;
-    if (!all.length) {
+    if (setup) {
+      const parts = [];
+      if (inCode) parts.push(plural(inCode, "secret") + " sitting in your code");
+      if (inEnv) parts.push(plural(inEnv, "secret") + " in .env files");
+      parts.push(setup + " .env " + (setup === 1 ? "file" : "files") + " not protected from GitHub");
+      verdictText = "Found " + plural(all.length, "problem") + ": " + parts.join(", ") + ". Fix these before you push or deploy anything.";
+    } else if (!all.length) {
       verdictText = "No leaked secrets found. Good. But this only checked for leaked secrets, nothing else.";
     } else if (!inEnv) {
       verdictText = "Found " + plural(all.length, "leaked secret") + ". Fix " + (all.length === 1 ? "this" : "these") + " before you deploy anything.";
@@ -344,4 +457,4 @@ if (typeof document !== "undefined") {
   });
 }
 
-if (typeof module !== "undefined") module.exports = { scan, scanEntries, skipReason, displayPath };
+if (typeof module !== "undefined") module.exports = { scan, scanEntries, skipReason, displayPath, checkGitignore, parseGitignore, isIgnored };
