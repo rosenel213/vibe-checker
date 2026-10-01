@@ -174,3 +174,12 @@ a { color: var(--focus); }
 .test-list li { background: var(--surface); padding: 0.6rem 0.9rem; border-left: 6px solid var(--safe); border-radius: 0 6px 6px 0; font-weight: 600; }
 .test-list li.fail { border-left-color: var(--danger); color: var(--danger); }
 .test-list pre { font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); font-weight: 400; }
+
+.finding-fix { margin-top: 0.7rem; }
+.fix-text { margin: 0; }
+.fix-code {
+  margin: 0.5rem 0 0; padding: 0.6rem 0.8rem; border-radius: 6px;
+  background: var(--bg); color: var(--ink); border: 1px solid var(--line);
+  font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}

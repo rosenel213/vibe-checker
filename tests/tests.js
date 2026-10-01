@@ -78,6 +78,25 @@
     test("Check 3: says it couldn't check when there are no .sql files",
       [0, VC.RLS_UNCHECKED], [noSql.findings.length, noSql.note]);
 
+    // Option A, step 1: real details filled in
+    function fixOf(scan, path, line) {
+      const grp = scan.groups.find((x) => x.path === path);
+      const f = grp && grp.findings.find((x) => (line ? x.line === line : true));
+      return f && f.fix ? f.fix : null;
+    }
+    test("Details: database fix names the real table",
+      "alter table public.todos enable row level security;", (fixOf(withSql, "supabase/migrations/20240101000000_init.sql", 9) || {}).code);
+    const pub = scanFolder(F.public);
+    test("Details: public secret fix gives the new name",
+      "OPENAI_API_KEY", (fixOf(pub, ".env", 5) || {}).code);
+    const bFix = fixOf(g, "b-old-nextjs/.env") || { text: "" };
+    test("Details: .gitignore fix names the right file and command",
+      [true, true], [bFix.text.includes("b-old-nextjs/.gitignore"), bFix.text.includes("git rm --cached b-old-nextjs/.env")]);
+    test("Details: code secret fix gives the replacement",
+      "process.env.OPENAI_API_KEY", (fixOf(p2, "src/api/chat.js", 8) || {}).code);
+    test("Details: secrets already in .env get no 'replace this line' fix",
+      null, fixOf(p2, ".env", 3));
+
     // Small rule tests
     const ignoreCases = [
       [".env", ".env", true], [".env", "sub/.env", true], ["/.env", "sub/.env", false],

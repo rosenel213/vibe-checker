@@ -30,6 +30,8 @@ It also catches secrets marked public: settings named `NEXT_PUBLIC_...`, `VITE_.
 
 For Supabase projects, it reads your `.sql` database setup files and flags tables without Row Level Security, which anyone can read and change using your public key. If there are no setup files (tables made in the Supabase website), it says it couldn't check, instead of staying quiet.
 
+Every finding says why it's dangerous and exactly what to do, using the real names from your project, like `alter table public.todos enable row level security;`.
+
 Found secrets are always shown masked (like `sk-p...1234`), never in full.
 
 ## What it doesn't do
@@ -78,6 +80,6 @@ This is piece 1 of a bigger checker for vibe-coded apps, built slowly on purpose
 1. Secret scanner (done)
 2. Scan a whole project at once (done)
 3. Checks for common Next.js + Supabase mistakes (done)
-4. Plain-English explanations of every finding (next)
+4. Plain-English explanations of every finding (you're here: every finding now includes the exact fix, with your real file, table, and setting names)
 5. A map that explains your own code to you
 6. A grade and shareable report card

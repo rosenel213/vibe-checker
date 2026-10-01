@@ -40,10 +40,18 @@
     item.append(head);
     if (f.value) item.append(el("code", "finding-value", f.value));
     if (seenMessages.has(f.message)) {
-      item.append(el("p", "finding-msg repeat", "Same problem as " + f.type.toLowerCase() + " above. Same fix."));
+      item.append(el("p", "finding-msg repeat", "Same problem as above."));
     } else {
       seenMessages.add(f.message);
       item.append(el("p", "finding-msg", f.message));
+    }
+    if (f.fix) {
+      const fix = el("div", "finding-fix");
+      const label = el("p", "fix-text");
+      label.append(el("strong", null, "What to do: "), document.createTextNode(f.fix.text));
+      fix.append(label);
+      if (f.fix.code) fix.append(el("pre", "fix-code", f.fix.code));
+      item.append(fix);
     }
     return item;
   }

@@ -15,6 +15,7 @@
         for (const f of findings) {
           if (f.exposed) continue; // a public name is a problem wherever it's written
           f.message = ENV_MESSAGE;
+          f.fix = null;
           f.inEnv = true;
         }
       }

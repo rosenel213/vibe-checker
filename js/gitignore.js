@@ -79,8 +79,9 @@
     return matchesIgnore(filePath, false, gitignores);
   }
 
-  const NO_GITIGNORE_MESSAGE = "There's no .gitignore file for this part of your project, so nothing stops this file from being pushed to GitHub along with your code, secrets and all. Create a file named .gitignore in your project's main folder with these two lines: .env* and !.env.example. If your .gitignore lives in a folder above the one you picked, pick that folder instead so we can see it.";
-  const NOT_COVERED_MESSAGE = "Your .gitignore doesn't cover this file, so it will be pushed to GitHub the next time you commit. Add the line .env* to your .gitignore (and !.env.example if you share a template). If this file is already on GitHub, .gitignore won't remove it: run git rm --cached on it and replace every secret inside.";
+  const NO_GITIGNORE_MESSAGE = "There's no .gitignore file for this part of your project, so nothing stops this file from being pushed to GitHub along with your code, secrets and all. If your .gitignore lives in a folder above the one you picked, pick that folder instead so we can see it.";
+  const NOT_COVERED_MESSAGE = "Your .gitignore doesn't cover this file, so it will be pushed to GitHub the next time you commit.";
+  const GITIGNORE_LINES = ".env*\n!.env.example";
 
   // entries: [{ path, text }]. Returns [{ path, finding }] for unprotected .env files.
   function checkGitignore(entries) {
@@ -92,16 +93,35 @@
     for (const e of entries) {
       if (!isEnvFile(e.path)) continue;
       if (isIgnored(e.path, gitignores)) continue;
-      problems.push({
-        path: e.path,
-        finding: {
-          type: "Not protected from GitHub",
-          message: gitignores.some((g) => !g.dir || e.path.startsWith(g.dir + "/")) ? NOT_COVERED_MESSAGE : NO_GITIGNORE_MESSAGE,
-          setup: true
-        }
-      });
+      const applying = gitignores.filter((g) => !g.dir || e.path.startsWith(g.dir + "/"));
+    let finding;
+    if (applying.length) {
+      const nearest = applying[applying.length - 1];
+      const gitignorePath = nearest.dir ? nearest.dir + "/.gitignore" : ".gitignore";
+      finding = {
+        type: "Not protected from GitHub",
+        message: NOT_COVERED_MESSAGE,
+        fix: {
+          text: "Add these lines to " + gitignorePath + ". If this file is already on GitHub, .gitignore won't remove it: also run git rm --cached " + e.path + " from the folder you scanned, and replace every secret inside.",
+          code: GITIGNORE_LINES
+        },
+        setup: true
+      };
+    } else {
+      const folder = dirOf(e.path);
+      finding = {
+        type: "Not protected from GitHub",
+        message: NO_GITIGNORE_MESSAGE,
+        fix: {
+          text: "Create a file named .gitignore in " + (folder ? "the " + folder + " folder" : "the folder you scanned") + " with these lines:",
+          code: GITIGNORE_LINES
+        },
+        setup: true
+      };
     }
-    return problems;
+    problems.push({ path: e.path, finding });
+  }
+  return problems;
   }
 
   VC.checkGitignore = checkGitignore;

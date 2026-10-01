@@ -23,7 +23,7 @@
     return raw.startsWith('"') ? raw.slice(1, -1) : raw.toLowerCase();
   }
 
-  const RLS_MESSAGE = "Row Level Security is off for this table. Your public Supabase key is in every visitor's browser, so anyone can use it to read, change, or delete everything in this table. Turn it on with: alter table TABLE_NAME enable row level security; then add policies that say who can see and change what.";
+  const RLS_MESSAGE = "Row Level Security is off for this table. Your public Supabase key is in every visitor's browser, so anyone can use it to read, change, or delete everything in this table.";
   const RLS_UNCHECKED = "We couldn't check your database tables. This project uses Supabase, but it has no database setup files (.sql), which usually means the tables were made in the Supabase website. Check them there: any table marked as unrestricted or with RLS disabled is open to anyone.";
   const RLS_DASHBOARD_NOTE = "We checked the tables in your .sql setup files. Tables made directly in the Supabase website aren't in those files, so check those there too.";
 
@@ -68,7 +68,14 @@
     const problems = [];
     for (const t of tables.values()) {
       if (t.rls) continue;
-      problems.push({ path: t.path, finding: { type: "Table without protection", line: t.line, value: t.name, message: RLS_MESSAGE, setupDb: true } });
+      const quoted = /^[a-z_][a-z0-9_$]*$/.test(t.name) ? t.name : '"' + t.name.replace(/"/g, '""') + '"';
+      problems.push({ path: t.path, finding: {
+        type: "Table without protection", line: t.line, value: t.name, message: RLS_MESSAGE, setupDb: true,
+        fix: {
+          text: "Run this in the Supabase SQL editor (or add it to a new setup file), then add policies that say who can see and change what:",
+          code: "alter table public." + quoted + " enable row level security;"
+        }
+      } });
     }
 
     let note = null;
